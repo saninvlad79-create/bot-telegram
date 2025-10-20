@@ -2,14 +2,15 @@ import telebot
 import sqlite3
 import datetime
 import logging
+import os
 from telebot import types
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Токен бота (получите у @BotFather)
-API_TOKEN = '8369809235:AAF5gKSyPMkAgyCb3a08gfjPye0dz0-zKOU'
+# Токен бота из переменных окружения (ВАЖНО для Render)
+API_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '8369809235:AAF5gKSyPMkAgyCb3a08gfjPye0dz0-zKOU')
 
 # Инициализация бота
 bot = telebot.TeleBot(API_TOKEN)
@@ -19,22 +20,26 @@ user_data = {}
 
 # Инициализация базы данных
 def init_db():
-    conn = sqlite3.connect('applications.db')
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS applications (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            username TEXT,
-            full_name TEXT,
-            phone TEXT,
-            application_text TEXT,
-            status TEXT DEFAULT 'new',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    conn.commit()
-    conn.close()
+    try:
+        conn = sqlite3.connect('applications.db')
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS applications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                username TEXT,
+                full_name TEXT,
+                phone TEXT,
+                application_text TEXT,
+                status TEXT DEFAULT 'new',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        conn.commit()
+        conn.close()
+        logger.info("База данных инициализирована")
+    except Exception as e:
+        logger.error(f"Ошибка инициализации БД: {e}")
 
 # Сохранение заявки в БД
 def save_application(user_id, username, full_name, phone, application_text):
@@ -44,7 +49,7 @@ def save_application(user_id, username, full_name, phone, application_text):
         cursor.execute('''
             INSERT INTO applications (user_id, username, full_name, phone, application_text)
             VALUES (?, ?, ?, ?, ?)
-        ''', (user_id, username, phone, full_name, application_text))
+        ''', (user_id, username, full_name, phone, application_text))
         conn.commit()
         conn.close()
         return True
@@ -104,7 +109,6 @@ def handle_about(message):
 📋 Что мы предлагаем:
 • Консультации
 • Техническую поддержку пользователей
-
 
 Работаем быстро и качественно!
     """
@@ -177,11 +181,11 @@ def handle_text(message):
 • Описание: {user_data[user_id]['application_text']}
 
 Наш специалист свяжется с вами в ближайшее время.
-
                 """
                 bot.send_message(message.chat.id, confirmation_text)
                 
-                # Уведомление администратору (замените CHAT_ID на ваш)
+                # Уведомление администратору
+                admin_chat_id = os.environ.get('ADMIN_CHAT_ID', '1060377514')
                 admin_text = f"""
 🚨 НОВАЯ ЗАЯВКА!
 
@@ -192,11 +196,10 @@ def handle_text(message):
 🆔 User ID: {user_id}
 ⏰ Время: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
                 """
-                # Замените YOUR_CHAT_ID на ваш chat_id
                 try:
-                    bot.send_message('1060377514', admin_text)
-                except:
-                    logger.warning("Admin chat ID not set or invalid")
+                    bot.send_message(admin_chat_id, admin_text)
+                except Exception as e:
+                    logger.warning(f"Admin notification failed: {e}")
                 
             else:
                 bot.send_message(message.chat.id, "❌ Произошла ошибка при сохранении заявки. Пожалуйста, попробуйте позже.")
@@ -225,19 +228,34 @@ def handle_contact(message):
         bot.send_message(message.chat.id, "Спасибо! Теперь опишите, чем мы можем вам помочь:", 
                          reply_markup=remove_markup)
 
-# Обработчик ошибок
+# Обработчик неизвестных команд
 @bot.message_handler(func=lambda message: True)
-def echo_all(message):
+def handle_unknown(message):
+    user_id = message.from_user.id
     if user_id not in user_data:
         bot.reply_to(message, "Я вас не понял. Используйте кнопки меню или команду /start")
+
+# Проверка работы бота
+def check_bot():
+    try:
+        bot_info = bot.get_me()
+        logger.info(f"Бот @{bot_info.username} запущен и работает!")
+        return True
+    except Exception as e:
+        logger.error(f"Ошибка при проверке бота: {e}")
+        return False
 
 # Запуск бота
 if __name__ == '__main__':
     print("Запуск бота для заявок...")
     init_db()
-    logger.info("База данных инициализирована")
     
-    try:
-        bot.infinity_polling()
-    except Exception as e:
-        logger.error(f"Ошибка при работе бота: {e}")
+    if check_bot():
+        logger.info("Бот готов к работе. Запускаем опрос...")
+        try:
+            bot.infinity_polling(timeout=60, long_polling_timeout=60)
+        except Exception as e:
+            logger.error(f"Ошибка при работе бота: {e}")
+    else:
+        logger.error("Не удалось запустить бота")
+
